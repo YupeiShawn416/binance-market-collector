@@ -176,3 +176,22 @@ def test_cli_sigterm_flushes_and_restart_uses_same_dataset(tmp_path):
             verify(config.db, expected_chain=reports[1]["event_chain"])
 
     asyncio.run(scenario())
+
+
+def test_cli_disk_reserve_has_non_retry_exit_status(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    config = tmp_path / "collector.toml"
+    config.write_text('db="btc.sqlite"\nhealth="health.json"\nmin_free_bytes=9000000000000000000\n')
+    result = subprocess.run(
+        [sys.executable, "-m", "market_service.cli", "run", "--config", str(config)],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 78
+    assert "DISK_LOW" in result.stderr
+    assert json.loads((tmp_path / "health.json").read_text())["state"] == "DISK_LOW"

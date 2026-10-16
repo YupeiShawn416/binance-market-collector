@@ -16,7 +16,9 @@ from market_service.verification import verify
 
 
 @asynccontextmanager
-async def exchange(*, metadata_failures=0, rate_limit=False, gap=False, silent=False):
+async def exchange(
+    *, metadata_failures=0, rate_limit=False, gap=False, silent=False, ignore_close=False
+):
     calls = {"metadata": 0, "ws": 0, "snapshot": 0, "trade": 0}
 
     async def metadata(request):
@@ -53,6 +55,9 @@ async def exchange(*, metadata_failures=0, rate_limit=False, gap=False, silent=F
                 pass
 
         sender = asyncio.create_task(send())
+        if ignore_close:
+            await sender
+            return ws
         try:
             async for _ in ws:
                 pass
@@ -193,3 +198,43 @@ def test_retry_after(header, expected):
 
 def test_retry_after_http_date():
     assert retry_after("Thu, 01 Jan 1970 00:01:00 GMT", now=30) == 30
+
+
+def test_peer_ignoring_close_cannot_hold_shutdown_forever(tmp_path):
+    async def scenario():
+        async with exchange(ignore_close=True) as (rest, ws, _):
+            with Journal(tmp_path / "market.sqlite") as journal:
+                result = await asyncio.wait_for(
+                    collect(MarketService(journal), seconds=0.05, rest_base=rest, ws_base=ws), 3
+                )
+                assert result["received_ws_frames"] > 0
+                assert not list(journal.pending())
+
+    asyncio.run(scenario())
+
+
+def test_processing_backlog_is_measured_from_receive_time(tmp_path):
+    async def scenario():
+        async with exchange() as (rest, ws, _):
+            with Journal(tmp_path / "market.sqlite") as journal:
+                service = MarketService(journal)
+                process = service.process
+
+                async def slow(frame):
+                    if frame.kind == "ws":
+                        await asyncio.sleep(0.06)
+                    return await process(frame)
+
+                service.process = slow
+                stats = await collect(
+                    service,
+                    seconds=0.18,
+                    rest_base=rest,
+                    ws_base=ws,
+                    stale_seconds=0.04,
+                    retry_initial=0.005,
+                    retry_max=0.01,
+                )
+                assert any("book_stale" in reason for reason in stats["network_boundaries"])
+
+    asyncio.run(scenario())

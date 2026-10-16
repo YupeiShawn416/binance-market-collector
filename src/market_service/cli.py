@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import aiohttp
@@ -49,7 +50,8 @@ async def run(args):
             try:
                 output(await run_with_signals(config, seconds=args.seconds))
             except DiskReserveError as exc:
-                raise SystemExit(f"DISK_LOW: {exc}") from None
+                print(f"DISK_LOW: {exc}", file=sys.stderr)
+                raise SystemExit(78) from None
     elif args.command == "backup":
         from .backup import backup_journal
 

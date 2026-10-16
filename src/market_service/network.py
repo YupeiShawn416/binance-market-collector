@@ -209,9 +209,9 @@ async def collect(
                         resync = await service.process(raw)
                         now = time.monotonic()
                         if service.projection.last_update_id != before:
-                            stats.last_book_mono = last_book = now
+                            stats.last_book_mono = last_book = raw.receive_mono_ns / 1e9
                         if service.projection.last_trade_id != trade_before:
-                            stats.last_trade_mono = now
+                            stats.last_trade_mono = raw.receive_mono_ns / 1e9
                         if resync:
                             raise ConnectionError("normalizer_requested_resync")
                         if now - last_book > stale_seconds:
