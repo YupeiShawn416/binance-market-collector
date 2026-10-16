@@ -1,0 +1,347 @@
+from collections import defaultdict
+import logging
+from decimal import Decimal
+from typing import Dict, Tuple
+
+from cryptofeed import _json as json
+
+from cryptofeed.connection import AsyncConnection, RestEndpoint, Routes, WebsocketEndpoint
+from cryptofeed.defines import BID, ASK, BUY, DERIBIT, FUNDING, FUTURES, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, PERPETUAL, SELL, TICKER, TRADES, FILLED, SPOT
+from cryptofeed.defines import CURRENCY, L1_BOOK
+from cryptofeed.feed import Feed
+from cryptofeed.exceptions import MissingSequenceNumber
+from cryptofeed.symbols import Symbol
+from cryptofeed.types import OrderBook, Trade, Ticker, Funding, OpenInterest, Liquidation, L1Book
+
+
+LOG = logging.getLogger(__name__)
+PUBLIC_INTERVAL = '100ms'
+
+
+class Deribit(Feed):
+    id = DERIBIT
+    provides_sequence_number = True
+    validates_sequence_number = True
+    websocket_endpoints = [WebsocketEndpoint('wss://www.deribit.com/ws/api/v2', sandbox='wss://test.deribit.com/ws/api/v2')]
+    rest_endpoints = [RestEndpoint('https://www.deribit.com', sandbox='https://test.deribit.com', routes=Routes(['/api/v2/public/get_instruments?currency=BTC', '/api/v2/public/get_instruments?currency=ETH', '/api/v2/public/get_instruments?currency=USDC', '/api/v2/public/get_instruments?currency=SOL']))]
+
+    websocket_channels = {
+        L1_BOOK: 'quote',
+        L2_BOOK: 'book',
+        TRADES: 'trades',
+        TICKER: 'ticker',
+        FUNDING: 'ticker',
+        OPEN_INTEREST: 'ticker',
+        LIQUIDATIONS: 'trades',
+    }
+    request_limit = 20
+
+    @classmethod
+    def timestamp_normalize(cls, ts: float) -> float:
+        return ts / 1000.0
+
+    @classmethod
+    def _parse_symbol_data(cls, data: list) -> Tuple[Dict, Dict]:
+        ret = {}
+        info = defaultdict(dict)
+
+        currencies = []
+        for entry in data:
+            for e in entry['result']:
+                base = e['base_currency']
+                if base not in currencies:
+                    currencies.append(base)
+                quote = e['quote_currency']
+                if 'settlement_period' not in e:
+                    stype = SPOT
+                else:
+                    stype = e['kind'] if e['settlement_period'] != 'perpetual' else PERPETUAL
+
+                otype = e.get('option_type')
+                if stype in ('option_combo', 'future_combo'):
+                    continue
+                strike_price = e.get('strike')
+                strike_price = int(strike_price) if strike_price else None
+                expiry = e['expiration_timestamp'] / 1000
+                s = Symbol(base, quote, type=FUTURES if stype == 'future' else stype, option_type=otype, strike_price=strike_price, expiry_date=expiry)
+                ret[s.normalized] = e['instrument_name']
+                info['tick_size'][s.normalized] = e['tick_size']
+                info['instrument_type'][s.normalized] = stype
+        for currency in currencies:
+            s = Symbol(currency, currency, type=CURRENCY)
+            ret[s.normalized] = currency
+            info['instrument_type'][s.normalized] = CURRENCY
+        return ret, info
+
+    def __reset(self):
+        self._open_interest_cache = {}
+        self._l2_book = {}
+        self.seq_no = {}
+
+    async def _trade(self, msg: dict, timestamp: float):
+        """
+        {
+            "params":
+            {
+                "data":
+                [
+                    {
+                        "trade_seq": 933,
+                        "trade_id": "9178",
+                        "timestamp": 1550736299753,
+                        "tick_direction": 3,
+                        "price": 3948.69,
+                        "instrument_name": "BTC-PERPETUAL",
+                        "index_price": 3930.73,
+                        "direction": "sell",
+                        "amount": 10
+                    }
+                ],
+                "channel": "trades.BTC-PERPETUAL.raw"
+            },
+            "method": "subscription",
+            "jsonrpc": "2.0"
+        }
+        """
+        for trade in msg["params"]["data"]:
+            t = Trade(
+                self.id,
+                self.exchange_symbol_to_std_symbol(trade["instrument_name"]),
+                BUY if trade['direction'] == 'buy' else SELL,
+                Decimal(trade['amount']),
+                Decimal(trade['price']),
+                self.timestamp_normalize(trade['timestamp']),
+                id=trade['trade_id'],
+                raw=trade
+            )
+            await self.callback(TRADES, t, timestamp)
+
+            if 'liquidation' in trade:
+                liq = Liquidation(
+                    self.id,
+                    self.exchange_symbol_to_std_symbol(trade["instrument_name"]),
+                    BUY if trade['direction'] == 'buy' else SELL,
+                    Decimal(trade['amount']),
+                    Decimal(trade['price']),
+                    trade['trade_id'],
+                    FILLED,
+                    self.timestamp_normalize(trade['timestamp']),
+                    raw=trade
+                )
+                await self.callback(LIQUIDATIONS, liq, timestamp)
+
+    async def _ticker(self, msg: dict, timestamp: float):
+        '''
+        {
+            "params" : {
+                "data" : {
+                    "timestamp" : 1550652954406,
+                    "stats" : {
+                        "volume" : null,
+                        "low" : null,
+                        "high" : null
+                    },
+                    "state" : "open",
+                    "settlement_price" : 3960.14,
+                    "open_interest" : 0.12759952124659626,
+                    "min_price" : 3943.21,
+                    "max_price" : 3982.84,
+                    "mark_price" : 3940.06,
+                    "last_price" : 3906,
+                    "instrument_name" : "BTC-PERPETUAL",
+                    "index_price" : 3918.51,
+                    "funding_8h" : 0.01520525,
+                    "current_funding" : 0.00499954,
+                    "best_bid_price" : 3914.97,
+                    "best_bid_amount" : 40,
+                    "best_ask_price" : 3996.61,
+                    "best_ask_amount" : 50
+                    },
+                "channel" : "ticker.BTC-PERPETUAL.raw"
+            },
+            "method" : "subscription",
+            "jsonrpc" : "2.0"}
+        '''
+        pair = self.exchange_symbol_to_std_symbol(msg['params']['data']['instrument_name'])
+        ts = self.timestamp_normalize(msg['params']['data']['timestamp'])
+        t = Ticker(
+            self.id,
+            pair,
+            Decimal(msg["params"]["data"]['best_bid_price']),
+            Decimal(msg["params"]["data"]['best_ask_price']),
+            ts,
+            raw=msg
+        )
+        await self.callback(TICKER, t, timestamp)
+
+        if "current_funding" in msg["params"]["data"] and "funding_8h" in msg["params"]["data"]:
+            f = Funding(
+                self.id,
+                pair,
+                Decimal(msg['params']['data']['mark_price']),
+                Decimal(msg["params"]["data"]["current_funding"]),
+                None,
+                ts,
+                raw=msg
+            )
+            await self.callback(FUNDING, f, timestamp)
+
+        # spot instruments have no open interest
+        oi = msg['params']['data'].get('open_interest')
+        if oi is None or (pair in self._open_interest_cache and oi == self._open_interest_cache[pair]):
+            return
+        self._open_interest_cache[pair] = oi
+        o = OpenInterest(
+            self.id,
+            pair,
+            Decimal(oi),
+            ts,
+            raw=msg
+        )
+        await self.callback(OPEN_INTEREST, o, timestamp)
+
+    async def _quote(self, quote: dict, timestamp: float):
+        book = L1Book(
+            self.id,
+            self.exchange_symbol_to_std_symbol(quote['instrument_name']),
+            Decimal(quote['best_bid_price']),
+            Decimal(quote['best_bid_amount']),
+            Decimal(quote['best_ask_price']),
+            Decimal(quote['best_ask_amount']),
+            self.timestamp_normalize(quote['timestamp']),
+            raw=quote
+        )
+        await self.callback(L1_BOOK, book, timestamp)
+
+    async def subscribe(self, conn: AsyncConnection):
+        self.__reset()
+
+        pub_channels = []
+        for chan in self.subscription:
+            for pair in self.subscription[chan]:
+                if self.exchange_channel_to_std(chan) == L1_BOOK:
+                    pub_channels.append(f"{chan}.{pair}")
+                else:
+                    pub_channels.append(f"{chan}.{pair}.{PUBLIC_INTERVAL}")
+        if pub_channels:
+            msg = {"jsonrpc": "2.0",
+                   "id": "101",
+                   "method": "public/subscribe",
+                   "params": {"channels": pub_channels}}
+            LOG.debug(f'{conn.uuid}: Subscribing to public channels with message {msg}')
+            await conn.write(json.dumps(msg))
+
+    async def _book_snapshot(self, msg: dict, timestamp: float):
+        """
+        {
+            'jsonrpc': '2.0',
+            'method': 'subscription',
+            'params': {
+                'channel': 'book.BTC-PERPETUAL.raw',
+                'data': {
+                    'timestamp': 1598232105378,
+                    'instrument_name': 'BTC-PERPETUAL',
+                    'change_id': 21486665526, '
+                    'bids': [['new', Decimal('11618.5'), Decimal('279310.0')], ..... ]
+                    'asks': [[ ....... ]]
+                }
+            }
+        }
+        """
+        ts = msg["params"]["data"]["timestamp"]
+        pair = self.exchange_symbol_to_std_symbol(msg["params"]["data"]["instrument_name"])
+        self._l2_book[pair] = OrderBook(self.id, pair, max_depth=self.max_depth)
+        self._l2_book[pair].book.bids = {Decimal(price): Decimal(amount) for _, price, amount in msg["params"]["data"]["bids"]}
+        self._l2_book[pair].book.asks = {Decimal(price): Decimal(amount) for _, price, amount in msg["params"]["data"]["asks"]}
+        self.seq_no[pair] = msg["params"]["data"]["change_id"]
+
+        await self.book_callback(L2_BOOK, self._l2_book[pair], timestamp, timestamp=self.timestamp_normalize(ts), sequence_number=msg["params"]["data"]["change_id"], raw=msg)
+
+    async def _book_update(self, msg: dict, timestamp: float):
+        ts = msg["params"]["data"]["timestamp"]
+        pair = self.exchange_symbol_to_std_symbol(msg["params"]["data"]["instrument_name"])
+
+        if pair not in self._l2_book:
+            return
+
+        prev_change_id = msg['params']['data']['prev_change_id']
+        change_id = msg['params']['data']['change_id']
+        if prev_change_id != self.seq_no[pair]:
+            if change_id == self.seq_no[pair]:
+                # duplicate update, skip vs raising
+                return
+            LOG.warning("%s: Missing sequence number detected for %s", self.id, pair)
+            raise MissingSequenceNumber
+
+        self.seq_no[pair] = change_id
+
+        delta = {BID: [], ASK: []}
+
+        # skip dels on missing levels
+        for action, price, amount in msg["params"]["data"]["bids"]:
+            if action != "delete":
+                self._l2_book[pair].book.bids[price] = Decimal(amount)
+                delta[BID].append((Decimal(price), Decimal(amount)))
+            elif price in self._l2_book[pair].book.bids:
+                del self._l2_book[pair].book.bids[price]
+                delta[BID].append((Decimal(price), Decimal(amount)))
+
+        for action, price, amount in msg["params"]["data"]["asks"]:
+            if action != "delete":
+                self._l2_book[pair].book.asks[price] = Decimal(amount)
+                delta[ASK].append((Decimal(price), Decimal(amount)))
+            elif price in self._l2_book[pair].book.asks:
+                del self._l2_book[pair].book.asks[price]
+                delta[ASK].append((Decimal(price), Decimal(amount)))
+
+        await self.book_callback(L2_BOOK, self._l2_book[pair], timestamp, timestamp=self.timestamp_normalize(ts), raw=msg, delta=delta, sequence_number=msg['params']['data']['change_id'])
+
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
+        msg_dict = json.loads(msg, parse_float=Decimal)
+        if 'error' in msg_dict.keys():
+            LOG.error("%s: Received Error message: %s, Error code: %s", conn.uuid, msg_dict['error']['message'], msg_dict['error']['code'])
+
+        elif "result" in msg_dict:
+            result = msg_dict["result"]
+            if 'id' in msg_dict:
+                id = str(msg_dict["id"])
+                if id == "0":
+                    LOG.debug("%s: Connected", conn.uuid)
+                elif id == '101':
+                    LOG.info("%s: Subscribed to public channels", conn.uuid)
+                    LOG.debug("%s: %s", conn.uuid, result)
+                else:
+                    LOG.warning("%s: Unknown id in message %s", conn.uuid, msg_dict)
+            else:
+                LOG.warning("%s: Unknown 'result' message received: %s", conn.uuid, msg_dict)
+
+        elif 'params' in msg_dict:
+            params = msg_dict['params']
+
+            if 'channel' in params:
+                channel = params['channel']
+
+                if "ticker" == channel.split(".")[0]:
+                    await self._ticker(msg_dict, timestamp)
+
+                elif "trades" == channel.split(".")[0]:
+                    await self._trade(msg_dict, timestamp)
+
+                elif "book" == channel.split(".")[0]:
+                    # checking if we got full book or its update
+                    # if it's update there is 'prev_change_id' field
+                    if "prev_change_id" not in msg_dict["params"]["data"].keys():
+                        await self._book_snapshot(msg_dict, timestamp)
+                    elif "prev_change_id" in msg_dict["params"]["data"].keys():
+                        await self._book_update(msg_dict, timestamp)
+
+                elif "quote" == channel.split(".")[0]:
+                    await self._quote(params['data'], timestamp)
+
+                else:
+                    LOG.warning("%s: Unknown channel %s", conn.uuid, msg_dict)
+            else:
+                LOG.warning("%s: Unknown 'params' message received: %s", conn.uuid, msg_dict)
+        else:
+            LOG.warning("%s: Unknown message in msg_dict: %s", conn.uuid, msg_dict)

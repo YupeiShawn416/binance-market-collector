@@ -1,0 +1,453 @@
+{
+  "$ref": "#/$defs/EventV2",
+  "$defs": {
+    "EventV2": {
+      "title": "EventV2",
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "enum": [
+            2
+          ]
+        },
+        "dataset_id": {
+          "type": "string"
+        },
+        "market_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "venue": {
+          "type": "string"
+        },
+        "instrument": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "book_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "raw_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "receive_wall_ns": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "receive_mono_ns": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "exchange_time_ns": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_resolution_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parser_version": {
+          "type": "string"
+        },
+        "normalized_wall_ns": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "normalized_mono_ns": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "normalizer_instance_id": {
+          "type": "string"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Instrument"
+            },
+            {
+              "$ref": "#/$defs/Quality"
+            },
+            {
+              "$ref": "#/$defs/OrderSnapshot"
+            },
+            {
+              "$ref": "#/$defs/OrderBatch"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "instrument": "#/$defs/Instrument",
+              "quality": "#/$defs/Quality",
+              "l3_snapshot": "#/$defs/OrderSnapshot",
+              "l3_batch": "#/$defs/OrderBatch"
+            }
+          }
+        },
+        "book_hash": {
+          "type": "string"
+        },
+        "historical_capture_ns": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data_origin": {
+          "enum": [
+            "historical",
+            "live",
+            "synthetic",
+            "unknown"
+          ],
+          "default": "unknown"
+        }
+      },
+      "required": [
+        "schema_version",
+        "dataset_id",
+        "market_seq",
+        "venue",
+        "instrument",
+        "session_id",
+        "book_epoch",
+        "raw_seq",
+        "receive_wall_ns",
+        "receive_mono_ns",
+        "boot_id",
+        "exchange_time_ns",
+        "source_resolution_ns",
+        "parser_version",
+        "normalized_wall_ns",
+        "normalized_mono_ns",
+        "normalizer_instance_id",
+        "payload",
+        "book_hash"
+      ],
+      "additionalProperties": false
+    },
+    "Instrument": {
+      "title": "Instrument",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "instrument"
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "price_tick": {
+          "type": "string"
+        },
+        "quantity_unit": {
+          "type": "string"
+        },
+        "order_step": {
+          "type": "string"
+        },
+        "spec_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "symbol",
+        "base",
+        "quote",
+        "price_tick",
+        "quantity_unit",
+        "order_step",
+        "spec_version"
+      ],
+      "additionalProperties": false
+    },
+    "Quality": {
+      "title": "Quality",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "quality"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "book",
+            "connection",
+            "trades"
+          ]
+        },
+        "state": {
+          "enum": [
+            "DISCONNECTED",
+            "INVALID",
+            "LIVE",
+            "SYNCING"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "scope",
+        "state",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "OrderSnapshot": {
+      "title": "OrderSnapshot",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "l3_snapshot"
+          ]
+        },
+        "orders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Order"
+          }
+        },
+        "depth": {
+          "enum": [
+            0,
+            10,
+            100,
+            1000
+          ]
+        },
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "visible_only"
+          ],
+          "default": "visible_only"
+        },
+        "source_sequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "known_bid_floor": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "known_ask_ceiling": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue_order_known": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "type",
+        "orders",
+        "depth",
+        "checksum"
+      ],
+      "additionalProperties": false
+    },
+    "Order": {
+      "title": "Order",
+      "type": "object",
+      "properties": {
+        "order_id": {
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "buy",
+            "sell"
+          ]
+        },
+        "price_ticks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "quantity_units": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "priority_time_ns": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "price_text": {
+          "type": "string"
+        },
+        "quantity_text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "side",
+        "price_ticks",
+        "quantity_units",
+        "priority_time_ns",
+        "price_text",
+        "quantity_text"
+      ],
+      "additionalProperties": false
+    },
+    "OrderBatch": {
+      "title": "OrderBatch",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "l3_batch"
+          ]
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Change"
+          }
+        },
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_sequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "changes",
+        "checksum"
+      ],
+      "additionalProperties": false
+    },
+    "Change": {
+      "title": "Change",
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "add",
+            "delete",
+            "modify"
+          ]
+        },
+        "order": {
+          "$ref": "#/$defs/Order"
+        }
+      },
+      "required": [
+        "action",
+        "order"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
