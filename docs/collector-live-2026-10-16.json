@@ -1,0 +1,73 @@
+{
+  "dataset_id": "9e79cd82-db1f-41c4-9e3b-e2d3c69c6c06",
+  "events": 1047,
+  "raw_frames": 1035,
+  "pending_raw": 0,
+  "counts": {
+    "Instrument": 1,
+    "Quality": 17,
+    "Snapshot": 2,
+    "Delta": 268,
+    "Trade": 759
+  },
+  "final_book_hash": "80cba9c816829877665b7f138365cb3370a7bc585bb6e00875562fa9d52f09cd",
+  "final_event_chain": "80d186954f3f3f5dc1c655f972de77861d287b7555c7b7581c5d5154de717c37",
+  "internal_hashes_verified": true,
+  "hash_transcript_equal": true,
+  "quality_boundaries": [
+    {
+      "seq": 506,
+      "scope": "connection",
+      "reason": "connection_closed_or_capture_complete"
+    },
+    {
+      "seq": 507,
+      "scope": "book",
+      "reason": "connection_lost"
+    },
+    {
+      "seq": 508,
+      "scope": "trades",
+      "reason": "connection_lost"
+    },
+    {
+      "seq": 515,
+      "scope": "trades",
+      "reason": "trade_id_gap:6769069233..6769069242"
+    },
+    {
+      "seq": 1045,
+      "scope": "connection",
+      "reason": "connection_closed_or_capture_complete"
+    },
+    {
+      "seq": 1046,
+      "scope": "book",
+      "reason": "connection_lost"
+    },
+    {
+      "seq": 1047,
+      "scope": "trades",
+      "reason": "connection_lost"
+    }
+  ],
+  "network": {
+    "received_ws_frames": 1028,
+    "reconnects": 1,
+    "forced_reconnect": true,
+    "network_boundaries": [
+      "ConnectionError: acceptance_forced_reconnect"
+    ],
+    "elapsed_seconds": 30.003
+  },
+  "two_consumer_transcripts_equal": true,
+  "consumer_resume_after_seq": 25,
+  "consumer_resume_equal": true,
+  "live_event_book_hashes_equal_history": true,
+  "observed_receive_to_normalize_ms": {
+    "p50": 13.024,
+    "p99": 73.14,
+    "max": 303.483,
+    "scope": "one live sample; excludes commit/socket/network/model latency"
+  }
+}

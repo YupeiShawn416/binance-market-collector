@@ -1,0 +1,36 @@
+[Unit]
+Description=Binance BTCUSDT public market-data collector
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=marketdata
+Group=marketdata
+WorkingDirectory=/opt/binance-market-collector
+ExecStart=/opt/binance-market-collector/.venv/bin/market-service run --config /etc/binance-market-collector/collector.toml
+Restart=on-failure
+RestartSec=30
+# Disk reserve requires an operator to free or extend storage.
+RestartPreventExitStatus=78
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StateDirectory=binance-market-collector
+StateDirectoryMode=0750
+RuntimeDirectory=binance-market-collector
+RuntimeDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/binance-market-collector /run/binance-market-collector
+
+[Install]
+WantedBy=multi-user.target

@@ -3,4 +3,4 @@
 Decision and trading consumers depend on contracts/source, never on the Binance adapter.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

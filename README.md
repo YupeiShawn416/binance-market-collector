@@ -1,140 +1,141 @@
-# 共享行情服务：Binance L2 与逐笔成交、L3研究接入
+# Binance BTC 现货采集器
 
-**v0.3：新增L3契约、Kraken认证采集入口和Coinbase真实历史L3导入。** 决策/交易参考消费者、SQLite日志和Unix socket基础设施共用；原Binance Event v1与原数据保持兼容。实际已取得免账户的Tardis Coinbase月首L3样本，并完成逐事件L3、逐事件L2、100ms L2三组主动单扫档对照。Kraken和Coinbase今日实时L3仍未获取：两者需要账户认证，本机直连也超时。详见[L3接入与实验](docs/l3-market-data.md)。
+采集 BTCUSDT **100ms L2 增量、5000档初始快照和原始逐笔成交**，保留收到的原始字节，写入本地持久日志；实时消费、历史追赶和回放共用 Event v1 与同一盘口计算内核。Binance 采集不需要账户或 API 密钥。
 
-**2026-10-16 更新：官方日度原始成交归档已取得，真实112个缺失ID已补齐。** 原始Event v1、盘口计算和观察日志不改写。3735笔原观察成交与日度trades逐笔一致；32/32/32/16分页、真实数据SIGKILL恢复和112笔重复导入通过。回补目录现在为REPAIRED，原observed和当时可见视图仍保留缺口。详见[回补说明](docs/trade-repair.md)和[本次证据](evidence/archive-2026-10-16/acceptance.json)。57项回归通过。
+v0.4 增加常驻运行、退避重连、健康心跳、磁盘保护、SIGINT/SIGTERM 停机及 SQLite 在线备份。网络恢复后重新获取快照并校验增量桥接；断线造成的盘口缺失仍有显式质量边界。
 
-这是已经能运行的行情闭环：BTC/USDT 实时 L2 和原始逐笔成交 → 原始记录 → 规范事件 → 本地持久日志 → 两个独立消费者 → 历史重放与哈希验证。它对应作者架构中的**行情服务**。这里的两个消费者是决策、交易服务的行情入口示例，还没有实现模型、风控、交易账户或下单。
+这是完整系统中的**行情服务**。决策和交易消费者目前是接口示例；模型、撮合、账户和真实下单不在这个仓库的已实现范围内。
 
-Binance实测结果见 [验收记录](evidence/live-verification.json) 和 [验收说明](docs/acceptance.md)。Binance采集不需要凭据；可选Kraken L3使用本机凭据获取行情认证token。服务没有查询资金、持仓或提交订单的功能。
+## 快速启动
 
-## 启动
-
-需要 Python 3.13、uv，以及能编译 C/Cython 扩展的本机工具链。macOS 与 Linux 使用本机 Unix socket。解压后在本目录执行：
+支持 macOS / Linux，Python 3.13 与 uv；构建依赖需要本机 C 编译器。依赖版本由 `uv.lock` 固定，首次安装需要联网。
 
 ```bash
 uv sync --frozen --extra dev
-uv run market-service --help
-uv run pytest
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
+uv run market-service run --config config/collector.toml
 ```
 
-需要Kraken认证组件时执行`uv sync --frozen --extra dev --extra kraken`。Coinbase历史导入、L3回放和对照实验不需要交易所账户或这个额外依赖。
+默认配置将日志写入 `data/btc.sqlite`，每5秒更新 `data/health.json`，并通过 `/tmp/binance-btc-market.sock` 发布已提交事件。路径相对于 **TOML 文件所在目录**解析。采集持续到 Ctrl+C / SIGTERM；`--seconds 60` 可用于短录制。启动前阅读 [配置](config/collector.toml)，尤其是磁盘预留量。
 
-`uv.lock` 固定了依赖。审查的 Cryptofeed 3.0.2 尚未发布到 PyPI，因此附带固定 commit 的精简**原样源码快照**，供 uv 从 `vendor/` 构建；不依赖先前工作区、系统里已有的包或特定机器的二进制扩展。来源、许可及文件校验在 [THIRD_PARTY.md](THIRD_PARTY.md)。部署时不要只复制本项目 wheel 而遗漏这两个源码依赖。
-
-### 录制并核验
+另一个终端检查状态：
 
 ```bash
-uv run market-service collect --db data/btc.sqlite --seconds 60 --socket /tmp/btc-market.sock --report data/capture.json
+uv run market-service health --config config/collector.toml
 ```
 
-该命令录制真实公开行情，并从头重放已提交日志，核验事件链与每批盘口哈希。再次使用同一个数据库，会先恢复未处理的原始尾部，保留 dataset 和 market_seq，再建立新连接/epoch、获取新快照；不会把旧盘口当成断线期间仍然连续。
+只有连接、盘口和成交质量均 LIVE、输入足够新且无待处理原始帧时，退出码才为0。尚未连通或正在同步时为 DEGRADED，心跳超时变为 STALE；`ready` 只描述当前采集状态，**不代表过去的观察区间没有缺口**。
 
-采集期间在另外两个终端运行：
+## 两个服务共用的消费路径
 
 ```bash
-uv run market-service consume --socket /tmp/btc-market.sock --state data/decision.sqlite
-uv run market-service consume --socket /tmp/btc-market.sock --state data/trading.sqlite
+uv run market-service consume --socket /tmp/binance-btc-market.sock --state data/decision.sqlite
+uv run market-service consume --socket /tmp/binance-btc-market.sock --state data/trading.sqlite
 ```
 
-这是两个独立 cursor 和盘口检查点。消费端退出后重新执行同一命令，即从自己最后一次提交的位置恢复。每个检查点只允许一个写者。业务系统接入时，应把业务状态与输入 cursor 放进自己的同一事务，不能先确认行情，再异步补记订单。
+两个进程各自保存 cursor 与盘口状态，重启后从自己最后的提交位置恢复。Publisher 从持久日志追赶和追尾，不通过另一条易丢的内存队列分发。采集端进程退出会断开 socket，消费者进程也会退出；服务恢复后重新执行消费命令，或由进程管理器重启消费者。
 
-### 读取随项目附带的真实样本
+直接核验 / 回放：
 
 ```bash
-uv run market-service verify --db evidence/live.sqlite --reference evidence/live-verification.json
-uv run market-service replay --db evidence/live.sqlite --report /tmp/btc-replay.json
+uv run market-service verify --db data/btc.sqlite --report data/verification.json
+uv run market-service replay --db data/btc.sqlite --report data/replay.json
 ```
 
-也可以先 `serve` 历史日志，再用**相同 socket 协议和消费者**读取：
+`verify` 从头核验原始记录 checksum、事件链与每批盘口哈希，适合对已停止的日志或固定备份执行。对持续写入的库核验可能遇到不同读取时点，先创建备份能得到固定边界。
+
+也可以在独立 socket 发布历史，消费者接口不变：
 
 ```bash
-uv run market-service serve --db evidence/live.sqlite --socket /tmp/btc-history.sock
-uv run market-service consume --socket /tmp/btc-history.sock --state /tmp/btc-history-consumer.sqlite --no-follow
+uv run market-service serve --db data/btc.sqlite --socket /tmp/btc-history.sock
+uv run market-service consume --socket /tmp/btc-history.sock --state data/history-consumer.sqlite --no-follow
 ```
 
-`serve` 不会把已结束的历史样本伪装成健康的实时连接。样本最后有显式 DISCONNECTED，消费者必须结合质量、事件时效和自己的实际到达时间判断是否可用于交易。
+历史以 `market_seq` 重放，保留接收时钟、交易所时间与当时质量，**不按时间戳重新排序事实**。相同日志产生相同事件及盘口哈希；跨模式共用的是事件和计算路径，历史数据不能据此获得真实下单权限。
 
-### 重新运行真实双消费者验收
+## 网络、恢复和存储
 
-使用新的路径，避免覆盖已有样本和消费状态：
+|情况|采集器的行为|
+|---|---|
+|启动时 REST 不通 / WS 断线|自动退避并重试；退避上限60秒，带抖动；错误历史最多64条|
+|HTTP 418 / 429|遵守 Retry-After；未提供有效值时等待120秒，等待可被停机打断|
+|盘口序列缺段 / 错误簿 / 过期|先记录 INVALID，再重连、获取新快照和验证增量桥接|
+|消费积压|按原始接收时间衡量新鲜度；过期数据不能因刚处理完而伪装成新行情|
+|Ctrl+C / SIGTERM|停止接收，处理已持久化尾部，记录 DISCONNECTED，再释放单写者锁|
+|SIGKILL / 崩溃|重启恢复已提交日志与未处理原始帧，然后开启新 epoch；旧簿不跨断线继续使用|
+|磁盘低于预留量|停止采集，保留文件，写 DISK_LOW，退出码78；不自动删除研究数据|
+
+SQLite WAL / FULL 提供事务与恢复：原始输入先落盘，一个输入的规范事件、去重索引、processed 水位和检查点原子提交。写入失败后不能继续使用已推进的内存态。健康检查按间隔采样，磁盘预留不是绝对不写满保证，需要留足余量。
+
+在线备份使用 SQLite 原生 backup API，包含 WAL 中已提交内容，不直接复制正在写入的 `.sqlite` 文件：
 
 ```bash
-uv run python scripts/acceptance.py --db /tmp/new-md-accept/live.sqlite --report /tmp/new-md-accept/report.json --seconds 30
+uv run market-service backup --db data/btc.sqlite --output data/backups/btc-001.sqlite
+uv run market-service verify --db data/backups/btc-001.sqlite
 ```
 
-这个脚本同时启动两个 socket 消费者；一个在第25条事件后关闭、从磁盘检查点重启；中途主动断开公开 WS；随后比较采集端、两个消费者、完整历史重放的全部事件及盘口哈希。网络条件不好会明确失败，不用合成数据替代真实验收。
+目标必须不存在；备份不会覆盖旧文件。返回 dataset、序列边界、待处理帧数和文件 SHA256。恢复到备份意味着从该备份边界继续，之后的观察历史需要另行保留；复制备份后用 `run` 指向它即可恢复原始尾部并建立新连接。
 
-## 模块边界
+当前存储仍是**单个追加 SQLite 日志**。自动跨日分区、压缩冷归档、保留期删除尚未实现，在线备份也不会缩小源库。先按健康信息中的磁盘余量和实际增长率管理容量。长期吞吐、整年容量和物理掉电尚未验收。
 
-```text
-network.py       aiohttp 公共WS/REST、整数接收时间、有界队列、重连
-    ↓ RawFrame
-service.py       编排：规范化 → 校验 → 原子提交；失败后禁止使用半提交内存态
-    ↓
-binance.py       Cryptofeed Binance 子类：复用真实快照/增量/序列代码
-    ↓ frozen Event v1
-store.py         SQLite WAL/FULL 原始日志、事件链、去重索引、检查点
-    ├─ source.py / replay     历史读取
-    └─ ipc.py / Publisher    同一已提交日志的catch-up + follow
-                  ↓
-            Consumer + book.py
-            两个独立只读市场视图
-```
+## 缺失成交与回补
 
-- 事件契约独立于 Binance、数据库和网络，见 [contracts.py](src/market_service/contracts.py) 与 [接口文档](docs/event-contract.md)。`msgspec` 提供冻结消息、类型/范围校验、MessagePack 与 JSON Schema。
-- `StrictBinance` 继承实际的 Cryptofeed Binance 类，复用 `_parse_snapshot`、`_book`、`_check_update_id`；只覆盖缺段上报、提前质量门禁和原始逐笔。没有复制整个 FeedHandler，也没改 vendor 源码。
-- 原始输入与规范事件分开。已接收原始帧先落盘；一个输入的所有规范事件、processed 水位和可选检查点在同一 SQLite 事务中提交，socket 只能读取已提交事件。
-- 消费端盘口复用 `orderbook` C 扩展。统一整数表示，增量数量为绝对量，0显式删除；一个双边批次应用完整后才检查和发布。采集端还将其结果与 Cryptofeed 原生 Decimal 簿逐批比较。
-- Publisher 不维护另一份易丢的实时发布队列；历史追赶和实时追尾都从日志读。客户端独立进度，最多32连接，慢读有超时。消费 cursor 与完整盘口状态一起提交。
-
-## 本地存储的取舍
-
-首版采用 SQLite 作为**追加事件日志**，一个盘口批次或一条成交对应一个 MessagePack BLOB；没有把5000个价位逐行更新到关系表。WAL/FULL、事务、约束、锁与崩溃恢复由 SQLite 提供，避免先自研文件提交协议。
-
-最初方案中的 Arrow/Parquet 分段归档保留为后续可替换导出层，本版本没有宣称已实现。跨日分区、压缩冷归档和保留策略尚未加入；长周期容量、性能与磁盘行为需专门验收。完整盘口哈希是当前闭环的校验成本，不是低延迟交易SLO。
-
-## 自动成交回补（独立进程）
-
-采集运行时，可在另一终端启动自动发现、回补和断点恢复任务。仅请求公开历史成交，客户端无账户与下单方法：
+回补是独立任务，不阻塞实时采集，不改写原观察日志：
 
 ```bash
 uv run market-service repair --db data/btc.sqlite --catalog data/repairs.sqlite --follow
 ```
 
-对原样本执行一次任务、查询两种口径的连续性：
+回补会发现 trade ID 缺口、去重、分页与断点恢复。REST 源不可用时缺口保持未解决；官方日度 trades 文件可作为显式离线导入来源。已验证过112个真实缺失 ID 的日度文件回补。
 
-```bash
-uv run market-service repair --db evidence/live.sqlite --catalog evidence/repair/repairs.sqlite --page-size 32 --report /tmp/repair-attempt.json
-uv run market-service coverage --db evidence/live.sqlite --catalog evidence/repair/repairs.sqlite --view observed --first-id 6763420844 --last-id 6763424690
-uv run market-service coverage --db evidence/live.sqlite --catalog evidence/repair/repairs.sqlite --view repaired --first-id 6763420844 --last-id 6763424690
+当时可见的 observed 与事后修复的 repaired 视图分开。修复成交不能恢复缺失的盘口路径或订单排队信息，也不会进入实时 Publisher 自动触发真实订单。连续区间和查询口径见 [回补说明](docs/trade-repair.md)。
+
+## 模块和开源复用
+
+```text
+config.py + runtime.py       配置、进程生命周期、信号、健康、磁盘保护
+            │
+network.py                  aiohttp REST / WS、缓冲、退避和重连
+            ↓ RawFrame
+service.py                  规范化与提交编排；失败后禁止继续
+            ↓
+binance.py                  Cryptofeed Binance 子类：快照、增量、ID桥接
+            ↓ frozen Event v1
+store.py                    SQLite 原始记录、事件链、去重索引、检查点
+            ├── ipc.py      同一日志的 catch-up + follow
+            ├── source.py   历史读取与消费 cursor
+            └── backup.py   SQLite 原生一致性备份
+                     ↓
+contracts.py + book.py       相同契约 + orderbook C 扩展盘口计算
 ```
 
-`coverage`是只读查询，可与回补写者并行运行；它不会启动网络请求。连续性只判断显式ID范围，不是交易权限。`repair --retry-now`可跳过普通错误退避，仍不跳过已经持久化的418/429 Retry-After。
+|复用组件|职责|本项目维护的边界|
+|---|---|---|
+|Cryptofeed 固定源码|Binance 快照 / 深度更新 / 序列桥接|严格质量门禁、原始 trade 与适配|
+|orderbook C 扩展|有序盘口|整数单位、零量删除、双边批次一致性|
+|aiohttp / asyncio|REST、WebSocket、并发与取消|重连政策、持久化顺序与进程管理|
+|msgspec|冻结事件、MessagePack、类型和范围校验|版本化事件字段与语义|
+|SQLite / sqlite3 / fcntl|事务、WAL、恢复、备份与进程锁|日志表、事件链和单写者约束|
 
-原REST网络验收与同时间段历史下载：
+没有改写 vendor 源码；固定来源、许可证和82份上游源文件校验见 [THIRD_PARTY.md](THIRD_PARTY.md)。仓库采用 AGPL-3.0-or-later。附带源代码依赖用于可复现构建，不要只分发项目 wheel 而遗漏依赖来源。
+
+## 检查与部署
 
 ```bash
-uv run python scripts/repair_acceptance.py --db evidence/live.sqlite --output evidence/repair
+make check test
 ```
 
-原始REST成交不可达时，该脚本保存失败和历史聚合对比后以非零码结束。10月15日失败记录保留于[evidence/repair/acceptance.json](evidence/repair/acceptance.json)。10月16日已通过官方日度ZIP补齐，新增`archive.py`读取及校验原始CSV，`scripts/archive_acceptance.py`复用同一回补事务和恢复逻辑。归档导入目前是显式离线任务，常驻`repair --follow`仍只自动请求REST，不会自行下载每日ZIP。
+自动化测试使用本地 HTTP / WebSocket，不依赖币安可达；包括缺段重同步、限流、静默断线、关闭握手超时、落盘后取消、进程级 SIGTERM / SIGKILL、断点恢复、双消费者和在线备份。Unix socket / TCP 测试需要运行环境允许本机套接字。
 
-`verify` 校验原始字节 checksum、全部规范事件 hash chain 以及消费者重建的盘口 hash；hash 用于检测不一致，不提供抵御可同时篡改数据库和外部证据的数字签名保证。
+真实联网验收需使用新的目录，避免覆盖原数据：
 
-## 质量与恢复语义
+```bash
+uv run python scripts/acceptance.py --db data/acceptance-new/live.sqlite --report data/acceptance-new/report.json --seconds 30
+```
 
-- Snapshot 只进入 SYNCING；第一批满足 update-ID 桥接的 delta 后 Book 才 LIVE。连接、盘口、成交三个质量域均为 LIVE，参考视图才 `ready`。
-- 深度缺段、crossed/locked、格式或精度错误先记录 INVALID，丢弃这一帧的无效规范输出，再重新连接/获取快照；不会把错误簿先发给策略。
-- 重连显式增加 book_epoch。raw trade 的 ID 去重与持久索引一起恢复；相同ID不同事实不能被静默吞掉。
-- 断线期间可能缺失公开成交；原观察日志记录明确的 trade ID gap，并开启新的观察片段。独立回补任务在原始历史源可用时补入修复目录，不改写原日志。**本次112个ID已由官方trades日度文件补齐，maker队列与L2路径仍不因成交修复自动连续。** 下游必须按缺口和所需历史窗口重建相关状态。
-- Writer 在原始落盘后、规范提交前、提交后遭 SIGKILL 的三个恢复位置已测试。已提交事件不会重复追加；未处理原始尾部会恢复规范化。新实时连接仍需独立快照桥接。
-- 历史 replay 按 market_seq，不按交易所时间或接收时间排序。重放与实时共享 Event、记录校验和 Projection；没有另一份“近似盘口”回测代码。
+它比较采集端、两消费者及历史回放的逐事件与盘口哈希，主动断开 WS，并重启一个消费者。网络不通会明确失败。[本次验收摘要](docs/collector-acceptance.md) 记录实际结果，不作性能承诺。
 
-## 范围
+- [Linux systemd 与 macOS 运行说明](docs/deployment.md)
+- [事件接口](docs/event-contract.md) / [原闭环验收方法](docs/acceptance.md)
+- [成交回补](docs/trade-repair.md) / [可选 L3 研究模块](docs/l3-market-data.md)
 
-本版固定 Binance spot BTC-USDT、深度diff及原始trade；初始快照最多5000档/侧，之后保留已观测增量。有限覆盖以已知边界记录，不声称知道边界之外的全部深度。L2是批量更新，不是完整MBO；不具备精确订单队列信息。
-
-工程闭环通过不等于整个交易底座已可实盘。尚未实现交易内核、模拟撮合、模型、账户与真实订单；本版也没有完成长期运行、容量压测或物理掉电测试。真实30秒样本中的耗时是一次观察，不能当成吞吐能力或尾延迟承诺。
+原始行情、数据库、凭据和本机验收产物由 `.gitignore` 排除；GitHub 包含代码、文档和可复现测试。历史研究文档中的 `evidence/` 指本地成果目录，不随仓库发布。
