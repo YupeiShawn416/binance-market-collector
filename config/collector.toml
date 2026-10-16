@@ -1,0 +1,13 @@
+# No API key required. All paths are relative to this file, not the shell's cwd.
+config_version = 1
+db = "../data/btc.sqlite"
+health = "../data/health.json"
+socket = "/tmp/binance-btc-market.sock"
+rest_base = "https://data-api.binance.vision"
+ws_base = "wss://data-stream.binance.vision"
+heartbeat_seconds = 5
+stale_seconds = 10
+retry_initial = 1
+retry_max = 60
+min_free_bytes = 2147483648
+checkpoint_every = 250

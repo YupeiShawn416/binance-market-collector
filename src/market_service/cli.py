@@ -31,7 +31,30 @@ def output(value, path=None):
 
 
 async def run(args):
-    if args.command == "l3-collect":
+    if args.command in ("run", "health"):
+        from .config import load_config
+        from .runtime import DiskReserveError, read_health, run_with_signals
+
+        config = load_config(args.config)
+        if args.command == "health":
+            try:
+                report = read_health(config)
+            except (FileNotFoundError, ValueError, KeyError) as exc:
+                output({"ready": False, "state": "UNAVAILABLE", "reason": str(exc)})
+                raise SystemExit(1) from None
+            output(report)
+            if not report["ready"]:
+                raise SystemExit(1)
+        else:
+            try:
+                output(await run_with_signals(config, seconds=args.seconds))
+            except DiskReserveError as exc:
+                raise SystemExit(f"DISK_LOW: {exc}") from None
+    elif args.command == "backup":
+        from .backup import backup_journal
+
+        output(backup_journal(args.db, args.output))
+    elif args.command == "l3-collect":
         from .contracts import Instrument
         from .l3.network import collect as collect_l3
         from .l3.network import credentials
@@ -211,6 +234,16 @@ def l3_publisher(db, socket):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    daemon = sub.add_parser("run", help="run the supervised Binance spot collector")
+    daemon.add_argument("--config", required=True)
+    daemon.add_argument("--seconds", type=float, help="optional bounded smoke run")
+    health = sub.add_parser("health", help="read heartbeat; exit 0 only when fresh and ready")
+    health.add_argument("--config", required=True)
+    backup = sub.add_parser(
+        "backup", help="create a consistent SQLite snapshot without replacing files"
+    )
+    backup.add_argument("--db", required=True)
+    backup.add_argument("--output", required=True)
     capture = sub.add_parser("collect", help="capture public BTCUSDT L2 + raw trades")
     capture.add_argument("--db", required=True)
     capture.add_argument("--seconds", type=float, default=60)
@@ -300,7 +333,7 @@ def main():
     imported.add_argument("--levels", type=int, default=100)
     imported.add_argument("--report")
     args = parser.parse_args()
-    if args.command == "collect" and args.seconds <= 0:
+    if args.command in ("collect", "run") and args.seconds is not None and args.seconds <= 0:
         parser.error("--seconds must be positive")
     asyncio.run(run(args))
 
