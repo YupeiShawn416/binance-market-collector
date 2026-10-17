@@ -9,6 +9,8 @@
 |msgspec0.22.0|锁定发布包，BSD-3-Clause|类型契约、MessagePack、JSON Schema|不修改|
 |aiohttp3.14.5|锁定发布包，Apache-2.0 AND MIT|公开REST/WS、ping/pong、连接生命周期|不修改|
 |python-kraken-sdk3.5.1（可选）|PyPI固定发布包，Apache-2.0；包哈希见uv.lock|SpotAsyncClient的nonce、HMAC、token请求、异常和连接清理|不修改；只调用GetWebSocketsToken。未复用其会转为float的WS回调，也未调用账户或交易端点|
+|Plotly6.9.0（可选）|锁定发布包；MIT|离线交互热力图、图例、缩放与浏览器图片导出|不修改；不使用CDN|
+|Matplotlib3.11.2（可选）|锁定发布包；许可证随上游发布包保留|Agg无浏览器PNG渲染；读取相同已校验网格|不修改|
 |SQLite / Python标准库|运行环境SQLite、sqlite3、asyncio、fcntl、hashlib|WAL/事务/完整性、事件循环、文件锁和哈希|不自研数据库、网络栈或锁算法|
 
 vendor去掉大体积上游测试行情、文档站点、Git对象和已编译产物，保留构建需要的原文件及许可。不是重新实现整个开源平台，也没有复制其整个账户/交易框架。实际构建依赖在uv.lock固定。
