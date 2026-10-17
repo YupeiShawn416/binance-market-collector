@@ -1,22 +1,32 @@
-# 开源组件与维护边界
+# 开源组件
 
-本项目代码采用AGPL-3.0-or-later；根目录LICENSE为对应许可文本。以下记录源码许可与出处，不替具体分发场景作法律解释。
+项目许可证：AGPL-3.0-or-later，见 [LICENSE](LICENSE)。依赖版本与包哈希固定在 `uv.lock`。
 
-|组件|固定来源|复用内容|改动|
-|---|---|---|---|
-|Cryptofeed3.0.2|bmoscon/cryptofeed `bd0fe96093837262ce2c89ebc00286f48495fdad`，AGPL-3.0-or-later|实际Binance类的快照解析、L2更新、ID桥接及依赖类型|vendor原样保留；我们在binance.py继承覆盖严格门禁与raw trade|
-|orderbook1.1.0|bmoscon/orderbook `349c340f3b06c20d69e3ef9f49f28f5acea75560`，GPL-3.0-or-later|C扩展有序盘口、整数/Decimal数据结构|vendor原样保留；零量删除和序列语义由小wrapper承担|
-|msgspec0.22.0|锁定发布包，BSD-3-Clause|类型契约、MessagePack、JSON Schema|不修改|
-|aiohttp3.14.5|锁定发布包，Apache-2.0 AND MIT|公开REST/WS、ping/pong、连接生命周期|不修改|
-|python-kraken-sdk3.5.1（可选）|PyPI固定发布包，Apache-2.0；包哈希见uv.lock|SpotAsyncClient的nonce、HMAC、token请求、异常和连接清理|不修改；只调用GetWebSocketsToken。未复用其会转为float的WS回调，也未调用账户或交易端点|
-|Plotly6.9.0（可选）|锁定发布包；MIT|离线交互热力图、图例、缩放与浏览器图片导出|不修改；不使用CDN|
-|Matplotlib3.11.2（可选）|锁定发布包；许可证随上游发布包保留|Agg无浏览器PNG渲染；读取相同已校验网格|不修改|
-|SQLite / Python标准库|运行环境SQLite、sqlite3、asyncio、fcntl、hashlib|WAL/事务/完整性、事件循环、文件锁和哈希|不自研数据库、网络栈或锁算法|
+|组件|来源与许可|复用内容|
+|---|---|---|
+|Cryptofeed 3.0.2|`bmoscon/cryptofeed@bd0fe96093837262ce2c89ebc00286f48495fdad`，AGPL-3.0-or-later|Binance 快照解析、L2 更新与序列桥接；严格门禁和 raw trade 位于本项目子类|
+|orderbook 1.1.0|`bmoscon/orderbook@349c340f3b06c20d69e3ef9f49f28f5acea75560`，GPL-3.0-or-later|C 扩展有序盘口；包装层处理整数单位、零量删除和批次语义|
+|msgspec 0.22.0|发布包，BSD-3-Clause|冻结契约、MessagePack、JSON Schema|
+|aiohttp 3.14.5|发布包，Apache-2.0 AND MIT|REST / WS、ping/pong、连接生命周期|
+|python-kraken-sdk 3.5.1，可选|PyPI，Apache-2.0|SpotAsyncClient 的签名、nonce 和 GetWebSocketsToken|
+|Plotly 6.9.0，可选|发布包，MIT|离线交互热力图、缩放、图例与图片导出|
+|Matplotlib 3.11.2，可选|发布包，附上游许可证|Agg PNG 渲染|
+|SQLite / Python 标准库|运行环境|事务、WAL、备份、事件循环、文件锁和哈希|
 
-vendor去掉大体积上游测试行情、文档站点、Git对象和已编译产物，保留构建需要的原文件及许可。不是重新实现整个开源平台，也没有复制其整个账户/交易框架。实际构建依赖在uv.lock固定。
+## 固定源码
 
-源码校验清单在third_party_manifest.json。运行`uv run python scripts/check_vendor.py`验证保留的文件没有被改写。生成的Cython C文件、egg-info、构建缓存不属于源码清单，打包时不带入。
+`vendor/` 保留构建源文件和许可证，排除上游测试行情、文档站点、Git 对象及编译产物。原始源文件按 `third_party_manifest.json` 校验：
 
-L3适配层复用已有SQLite日志、Consumer持久游标、IPC帧、MessagePack校验、整数换算和C价格有序簿；Kraken队列CRC及Coinbase full订单生命周期是本项目的协议适配代码。现有Cryptofeed Coinbase是Advanced Trade适配器，不支持Exchange full/level3；Kraken适配器也只提供L2，未假装已复用到L3。SDK审查参考仓库为`btschwertfeger/python-kraken-sdk`，本次检出的commit为`04238ef35beb723d5b9aa1efd7d7f980b8a781c9`；实际依赖为锁定的PyPI3.5.1，不宣称此commit等同发布包。
+```bash
+uv run python scripts/check_vendor.py
+```
 
-行情数据来源和开源代码许可分开记录：Coinbase历史样本来自Tardis公开月首接口，适用提供商及交易所的数据使用条件；本地研究下载不等于获得再分发授权。Kraken官方CRC样例来源见`tests/fixtures/SOURCES.md`。
+Cython 生成文件、egg-info 和缓存属于构建产物。分发项目时须包含两个源码依赖或对应构建包。
+
+## L3 适配
+
+L3 复用 Journal、Consumer、IPC、整数换算及 C 盘口；Kraken 队列 CRC 和 Coinbase full 生命周期由本项目实现。Cryptofeed 的 Coinbase 适配器面向 Advanced Trade，Kraken 适配器提供 L2；L3 原始 WS 由 aiohttp 接收。
+
+Kraken SDK 审查参考提交：`btschwertfeger/python-kraken-sdk@04238ef35beb723d5b9aa1efd7d7f980b8a781c9`；运行依赖为 PyPI 3.5.1。
+
+行情数据适用各提供商及交易所条款。Coinbase 历史样本来源为 Tardis 月首接口；Kraken CRC 样例来源见 [SOURCES.md](tests/fixtures/SOURCES.md)。
