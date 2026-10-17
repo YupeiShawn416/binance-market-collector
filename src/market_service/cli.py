@@ -52,6 +52,38 @@ async def run(args):
             except DiskReserveError as exc:
                 print(f"DISK_LOW: {exc}", file=sys.stderr)
                 raise SystemExit(78) from None
+    elif args.command == "preview":
+        from .preview import PreviewOptions
+        from .preview_html import preview_html
+
+        destinations = [Path(p).resolve() for p in (args.output, args.png, args.report) if p]
+        source_path = Path(args.db).resolve()
+        forbidden = {
+            source_path,
+            *[Path(str(source_path) + s) for s in ("-wal", "-shm", ".lockfile")],
+        }
+        if len(set(destinations)) != len(destinations) or any(p in forbidden for p in destinations):
+            raise ValueError(
+                "preview output/report paths must be distinct and cannot overlap the journal"
+            )
+        if args.report and Path(args.report).exists():
+            raise FileExistsError(f"refusing to replace {args.report}")
+        output(
+            preview_html(
+                args.db,
+                args.output,
+                PreviewOptions(
+                    max_events=args.max_events,
+                    time_bin_ms=args.time_bin_ms,
+                    max_time_bins=args.max_time_bins,
+                    price_bins=args.price_bins,
+                    band_bps=args.band_bps,
+                    stale_seconds=args.stale_seconds,
+                ),
+                png=args.png,
+            ),
+            args.report,
+        )
     elif args.command == "backup":
         from .backup import backup_journal
 
@@ -241,6 +273,17 @@ def main():
     daemon.add_argument("--seconds", type=float, help="optional bounded smoke run")
     health = sub.add_parser("health", help="read heartbeat; exit 0 only when fresh and ready")
     health.add_argument("--config", required=True)
+    preview = sub.add_parser("preview", help="export an offline L2 and data-quality heatmap")
+    preview.add_argument("--db", required=True)
+    preview.add_argument("--output", required=True)
+    preview.add_argument("--max-events", type=int, default=20000)
+    preview.add_argument("--time-bin-ms", type=int, default=100)
+    preview.add_argument("--max-time-bins", type=int, default=600)
+    preview.add_argument("--price-bins", type=int, default=120)
+    preview.add_argument("--band-bps", type=float, default=20)
+    preview.add_argument("--stale-seconds", type=float, default=10)
+    preview.add_argument("--report")
+    preview.add_argument("--png", help="optional browser-free PNG companion")
     backup = sub.add_parser(
         "backup", help="create a consistent SQLite snapshot without replacing files"
     )

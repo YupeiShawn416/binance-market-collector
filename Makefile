@@ -1,6 +1,6 @@
 .PHONY: install check test
 install:
-	uv sync --frozen --extra dev --extra kraken
+	uv sync --frozen --extra dev --extra kraken --extra preview
 check:
 	uv run ruff check src tests scripts
 	uv run ruff format --check src tests scripts

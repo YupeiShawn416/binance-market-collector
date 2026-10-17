@@ -13,5 +13,5 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
           python-version: '3.13'
-      - run: uv sync --frozen --extra dev --extra kraken
+      - run: uv sync --frozen --extra dev --extra kraken --extra preview
       - run: make check test
