@@ -27,6 +27,16 @@ uv run market-service health --config config/collector.toml
 
 ## 数据质量热力图
 
+![BTCUSDT 实际采集数据质量热力图：盘口深度、断线区间、质量状态与观察成交量](docs/assets/market-data-quality-preview.png)
+
+实际采集样本，2026-10-16 15:44:37–15:45:06 UTC：**1047 个事件、759 笔观察成交、10 个缺失成交 ID**。中央灰色竖带是主动断线区间，未用旧盘口填充。
+
+- 上图：可见挂单深度及最优买卖报价，颜色越亮表示该价格格的挂单量越大。
+- 中间：连接、盘口、成交的质量状态；× 标记表示同步、断线或缺段等质量边界。
+- 下图：已观察到的主动买卖成交量。灰色未知区域不能解读为没有流动性。
+
+生成自己的预览：
+
 ```bash
 uv sync --frozen --extra preview
 uv run market-service preview --db data/btc.sqlite --output data/quality-001.html --png data/quality-001.png --report data/quality-001.json
@@ -149,4 +159,4 @@ uv run python scripts/acceptance.py --db data/acceptance-new/live.sqlite --repor
 - [事件接口](docs/event-contract.md) / [原闭环验收方法](docs/acceptance.md)
 - [成交回补](docs/trade-repair.md) / [可选 L3 研究模块](docs/l3-market-data.md)
 
-原始行情、数据库、凭据和本机验收产物由 `.gitignore` 排除；GitHub 包含代码、文档和可复现测试。历史研究文档中的 `evidence/` 指本地成果目录，不随仓库发布。
+原始行情、数据库、凭据和本机验收产物由 `.gitignore` 排除；GitHub 包含代码、文档、README 静态预览图和可复现测试。历史研究文档中的 `evidence/` 指本地成果目录，不随仓库发布。

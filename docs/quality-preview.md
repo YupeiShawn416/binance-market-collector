@@ -45,4 +45,4 @@ uv run market-service preview --db data/btc.sqlite --output data/quality-002.htm
 
 数值测试覆盖时间加权、有效零值与未知的区别、部分缺失遮罩、断线、过期、检查点尾部、瞬时成交缺口、墙钟回退、原始输入 / 检查点损坏和输出路径保护。PNG 已生成并人工检查，使用同一聚合结果；HTML 结构与离线脚本通过自动检查。浏览器本地文件地址策略阻止自动打开 HTML，因此交互和窄屏布局尚未做浏览器实测，不将其写成已通过。
 
-Plotly 和 Matplotlib 作为 `preview` 可选依赖，由 `uv.lock` 锁定；不影响仅运行采集器的安装体积。生成的真实数据预览放在本地 `data/`，不随公开仓库分发。
+Plotly 和 Matplotlib 作为 `preview` 可选依赖，由 `uv.lock` 锁定；不影响仅运行采集器的安装体积。生成的 HTML、JSON 和原始行情库保留在本地 `data/`；README 使用的静态样例图单独存放在 `docs/assets/`，随仓库发布。
